@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RepoIntel AI Assistant</title>
+    <style>
+      :root {
+        --bg-primary: #0f172a;
+        --bg-secondary: #1e293b;
+        --text-main: #f8fafc;
+        --text-muted: #94a3b8;
+        --accent: #38bdf8;
+        --accent-hover: #0ea5e9;
+        --chat-user: #0369a1;
+        --chat-agent: #334155;
+        --border-color: #334155;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+
+      body {
+        background-color: var(--bg-primary);
+        color: var(--text-main);
+        display: flex;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      /* Sidebar Panel Layout */
+      .sidebar {
+        width: 320px;
+        background-color: var(--bg-secondary);
+        border-right: 1px solid var(--border-color);
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      h2,
+      h3 {
+        color: var(--accent);
+        font-weight: 600;
+      }
+
+      .input-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      label {
+        font-size: 0.85rem;
+        color: var(--text-muted);
+      }
+
+      input[type="text"] {
+        width: 100%;
+        padding: 10px 14px;
+        background-color: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-main);
+        font-size: 0.9rem;
+        outline: none;
+        transition: border-color 0.2s;
+      }
+
+      input[type="text"]:focus {
+        border-color: var(--accent);
+      }
+
+      button {
+        width: 100%;
+        padding: 12px;
+        background-color: var(--accent);
+        color: var(--bg-primary);
+        border: none;
+        border-radius: 6px;
+        font-weight: bold;
+        font-size: 0.9rem;
+        cursor: pointer;
+        transition: background-color 0.2s;
+      }
+
+      button:hover {
+        background-color: var(--accent-hover);
+      }
+
+      .status-box {
+        background-color: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        padding: 12px;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        word-break: break-all;
+      }
+
+      /* Main Chat Window Layout */
+      .chat-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+
+      .chat-header {
+        padding: 20px;
+        background-color: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
+      }
+
+      .messages-viewport {
+        flex: 1;
+        padding: 20px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .message {
+        max-width: 75%;
+        padding: 12px 16px;
+        border-radius: 8px;
+        line-height: 1.5;
+        font-size: 0.95rem;
+        white-space: pre-wrap;
+      }
+
+      .message.user {
+        background-color: var(--chat-user);
+        align-self: flex-end;
+        border-bottom-right-radius: 2px;
+      }
+
+      .message.agent {
+        background-color: var(--chat-agent);
+        align-self: flex-start;
+        border-bottom-left-radius: 2px;
+      }
+
+      .chat-input-area {
+        padding: 20px;
+        background-color: var(--bg-secondary);
+        border-top: 1px solid var(--border-color);
+        display: flex;
+        gap: 12px;
+      }
+
+      .chat-input-area input {
+        flex: 1;
+      }
+
+      .chat-input-area button {
+        width: auto;
+        padding: 0 24px;
+      }
+
+      /* Utility Loading State styles */
+      .loading-text {
+        color: var(--text-muted);
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sidebar">
+      <h2>🐙 RepoIntel v2</h2>
+      <p style="font-size: 0.85rem; color: var(--text-muted);">
+        Polyglot Repository Analyzer Pipeline Gateway
+      </p>
+      <hr style="border: 0; border-top: 1px solid var(--border-color);" />
+
+      <div class="input-group">
+        <label for="repoUrl">Target GitHub URL</label>
+        <input
+          type="text"
+          id="repoUrl"
+          placeholder="https://github.com/username/repo"
+        />
+      </div>
+
+      <button id="ingestBtn">Clone & Index Codebase</button>
+
+      <div class="input-group">
+        <label>Active Project Workspace:</label>
+        <div id="workspaceStatus" class="status-box">
+          No remote target loaded yet (Using local directory fallback).
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-container">
+      <div class="chat-header">
+        <h3>💬 Codebase Interactive Session</h3>
+      </div>
+
+      <div class="messages-viewport" id="messagesViewport">
+        <div class="message agent">
+          Hello! Ingest a public GitHub repository using the left pane, or ask
+          me questions about your current local source module directory
+          immediately.
+        </div>
+      </div>
+
+      <div class="chat-input-area">
+        <input
+          type="text"
+          id="userQuery"
+          placeholder="Ask a question about the analytical structure of the code..."
+          onkeydown="if(event.key === 'Enter') sendChatMessage()"
+        />
+        <button id="sendBtn" onclick="sendChatMessage()">Send</button>
+      </div>
+    </div>
+
+    <script>
+      const API_BASE = `${window.location.origin}/api`;
+      const ingestBtn = document.getElementById("ingestBtn");
+      const sendBtn = document.getElementById("sendBtn");
+      const repoUrlInput = document.getElementById("repoUrl");
+      const userQueryInput = document.getElementById("userQuery");
+      const viewport = document.getElementById("messagesViewport");
+      const workspaceStatus = document.getElementById("workspaceStatus");
+
+      // --- HANDLER: INGEST GIT REPOSITORY ---
+      ingestBtn.addEventListener("click", async () => {
+        const url = repoUrlInput.value.trim();
+        if (!url) {
+          alert("Please drop a valid repository web address first!");
+          return;
+        }
+
+        // Set loading indicators
+        ingestBtn.disabled = true;
+        ingestBtn.innerText = "Cloning & Vectorizing...";
+        workspaceStatus.innerHTML =
+          "<span class='loading-text'>Running Tree-Sitter AST extractions...</span>";
+
+        try {
+          const response = await fetch(`${API_BASE}/ingest`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ repo_url: url }),
+          });
+
+          const data = await response.json();
+          if (response.ok) {
+            workspaceStatus.innerHTML = `<span style="color: var(--accent);">✅ Active:</span><br>${data.workspace_path}`;
+            appendMessage(
+              "agent",
+              `Successfully finished processing target repository:\n${url}\n\nThe full index has been refreshed. What code abstractions would you like to parse?`,
+            );
+          } else {
+            throw new Error(data.detail || "Ingestion workflow error.");
+          }
+        } catch (err) {
+          workspaceStatus.innerHTML = `<span style="color: #f87171;">❌ Failed:</span><br>${err.message}`;
+          alert(`Pipeline connection failure: ${err.message}`);
+        } finally {
+          ingestBtn.disabled = false;
+          ingestBtn.innerText = "Clone & Index Codebase";
+        }
+      });
+
+      // --- HANDLER: SEND INTERACTIVE CHAT MESSAGE ---
+      async function sendChatMessage() {
+        const query = userQueryInput.value.trim();
+        if (!query || sendBtn.disabled) return;
+
+        appendMessage("user", query);
+        userQueryInput.value = "";
+
+        const loadingId = appendMessage(
+          "agent",
+          "Thinking... running code graph semantic trace...",
+        );
+        sendBtn.disabled = true;
+
+        try {
+          const response = await fetch(`${API_BASE}/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: query }),
+          });
+
+          const data = await response.json();
+          const loadingElement = document.getElementById(loadingId);
+
+          if (response.ok) {
+            loadingElement.innerText = data.response;
+          } else {
+            // FIX: Render the exact server exception trace directly onto the screen text element
+            throw new Error(
+              data.detail ||
+                `Server dropped transaction with status code: ${response.status}`,
+            );
+          }
+        } catch (err) {
+          const loadingElement = document.getElementById(loadingId);
+          if (loadingElement) {
+            // Highlight it in deep red so it catches your eye instantly
+            loadingElement.innerHTML = `<span style="color: #f87171; font-weight: bold;">⚠️ Pipeline Route Crashed:</span><br><pre style="background: #000; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 0.8rem; margin-top: 5px; overflow-x: auto;">${err.message}</pre>`;
+          }
+        } finally {
+          sendBtn.disabled = false;
+        }
+      }
+
+      // --- HELPER: RENDER ELEMENTS INTO SCREEN VIEWPORT ---
+      function appendMessage(sender, text) {
+        const msgBlock = document.createElement("div");
+        const uniqueId =
+          "msg-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+
+        msgBlock.className = `message ${sender}`;
+        msgBlock.id = uniqueId;
+        msgBlock.innerText = text;
+
+        viewport.appendChild(msgBlock);
+
+        // Auto-scroll instantly down to mirror dynamic console trace feel
+        viewport.scrollTop = viewport.scrollHeight;
+
+        return uniqueId;
+      }
+    </script>
+  </body>
+</html>
