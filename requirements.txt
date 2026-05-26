@@ -396,9 +396,7 @@ python-multipart==0.0.29
     #   fastmcp-slim
     #   mcp
 pywin32==311
-    # via
-    #   repointelv2 (pyproject.toml)
-    #   mcp
+    # via mcp
 pywin32-ctypes==0.2.3
     # via keyring
 pyyaml==6.0.3
