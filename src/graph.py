@@ -59,8 +59,7 @@ def analysis_node(state: AgentState):
         "You are RepoIntel v2, an expert software architect executing inside a production "
         "MCP decoupled framework. Use your tools to read, edit, or test local source code.\n"
         "CRITICAL: When requested to write or modify code, always call 'update_local_file' with the "
-        "EXACT file path provided in the context header blocks above, and immediately call 'execute_test_suite' "
-        "to verify adjustments.\n\n"
+        "EXACT file path provided in the context header blocks above.\n\n"
         f"Retrieved Code Semantics Context:\n{context_str}"
     )
 
