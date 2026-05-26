@@ -30,6 +30,7 @@
         display: flex;
         height: 100vh;
         overflow: hidden;
+        position: relative;
       }
 
       /* Sidebar Panel Layout */
@@ -41,6 +42,8 @@
         display: flex;
         flex-direction: column;
         gap: 20px;
+        z-index: 50;
+        transition: transform 0.3s ease;
       }
 
       h2,
@@ -108,12 +111,33 @@
         display: flex;
         flex-direction: column;
         height: 100%;
+        width: 80%;
       }
 
       .chat-header {
-        padding: 20px;
+        padding: 15px 20px;
         background-color: var(--bg-secondary);
         border-bottom: 1px solid var(--border-color);
+        display: flex;
+        align-items: center;
+        gap: 15px;
+      }
+
+      /* Mobile UI Hamburger Toggle Button Icon */
+      .menu-toggle {
+        display: none;
+        background: none;
+        border: 1px solid var(--border-color);
+        color: var(--text-main);
+        padding: 8px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 1.2rem;
+        width: auto;
+      }
+
+      .menu-toggle:hover {
+        background-color: var(--bg-primary);
       }
 
       .messages-viewport {
@@ -163,15 +187,68 @@
         padding: 0 24px;
       }
 
-      /* Utility Loading State styles */
       .loading-text {
         color: var(--text-muted);
         font-style: italic;
       }
+
+      /* Sidebar Mobile Overlay Backdrop Shield */
+      .sidebar-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(15, 23, 42, 0.75);
+        backdrop-filter: blur(4px);
+        z-index: 40;
+      }
+
+      /* =====================================================================
+         📱 MOBILE RESPONSIVE MEDIA BREAKPOINT (768px)
+         ===================================================================== */
+      @media (max-width: 768px) {
+        .menu-toggle {
+          display: block; /* Reveal mobile sidebar toggle engine button */
+        }
+
+        .sidebar {
+          position: fixed;
+          top: 0;
+          left: 0;
+          height: 100vh;
+          transform: translateX(-100%); /* Stash sidebar out of screen boundaries */
+          box-shadow: 10px 0 25px -5px rgba(0, 0, 0, 0.5);
+        }
+
+        .sidebar.open {
+          transform: translateX(0); /* Slide sidebar back out smoothly on execution */
+        }
+
+        .sidebar-overlay.active {
+          display: block;
+        }
+
+        .message {
+          max-width: 90%; /* Offer bubbles more horizontal space on slim displays */
+        }
+
+        .chat-input-area {
+          padding: 12px;
+          gap: 8px;
+        }
+
+        .chat-input-area button {
+          padding: 0 16px;
+        }
+      }
     </style>
   </head>
   <body>
-    <div class="sidebar">
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="sidebar" id="sidebarPanel">
       <h2>🐙 RepoIntel v2</h2>
       <p style="font-size: 0.85rem; color: var(--text-muted);">
         Polyglot Repository Analyzer Pipeline Gateway
@@ -199,7 +276,8 @@
 
     <div class="chat-container">
       <div class="chat-header">
-        <h3>💬 Codebase Interactive Session</h3>
+        <button class="menu-toggle" id="menuToggleBtn" aria-label="Toggle Navigation Menu">☰</button>
+        <h3>💬 Codebase Session</h3>
       </div>
 
       <div class="messages-viewport" id="messagesViewport">
@@ -214,7 +292,7 @@
         <input
           type="text"
           id="userQuery"
-          placeholder="Ask a question about the analytical structure of the code..."
+          placeholder="Ask a question about the code structure..."
           onkeydown="if(event.key === 'Enter') sendChatMessage()"
         />
         <button id="sendBtn" onclick="sendChatMessage()">Send</button>
@@ -230,6 +308,20 @@
       const viewport = document.getElementById("messagesViewport");
       const workspaceStatus = document.getElementById("workspaceStatus");
 
+      // Mobile Interactivity Context UI Bindings
+      const menuToggleBtn = document.getElementById("menuToggleBtn");
+      const sidebarPanel = document.getElementById("sidebarPanel");
+      const sidebarOverlay = document.getElementById("sidebarOverlay");
+
+      // Toggle drawer state
+      function toggleMobileSidebar() {
+        sidebarPanel.classList.toggle("open");
+        sidebarOverlay.classList.toggle("active");
+      }
+
+      menuToggleBtn.addEventListener("click", toggleMobileSidebar);
+      sidebarOverlay.addEventListener("click", toggleMobileSidebar);
+
       // --- HANDLER: INGEST GIT REPOSITORY ---
       ingestBtn.addEventListener("click", async () => {
         const url = repoUrlInput.value.trim();
@@ -238,7 +330,6 @@
           return;
         }
 
-        // Set loading indicators
         ingestBtn.disabled = true;
         ingestBtn.innerText = "Cloning & Vectorizing...";
         workspaceStatus.innerHTML =
@@ -258,6 +349,8 @@
               "agent",
               `Successfully finished processing target repository:\n${url}\n\nThe full index has been refreshed. What code abstractions would you like to parse?`,
             );
+            // Auto-close sidebar panel drawer upon successful repository ingest on mobile displays
+            if(window.innerWidth <= 768) toggleMobileSidebar();
           } else {
             throw new Error(data.detail || "Ingestion workflow error.");
           }
@@ -297,7 +390,6 @@
           if (response.ok) {
             loadingElement.innerText = data.response;
           } else {
-            // FIX: Render the exact server exception trace directly onto the screen text element
             throw new Error(
               data.detail ||
                 `Server dropped transaction with status code: ${response.status}`,
@@ -306,7 +398,6 @@
         } catch (err) {
           const loadingElement = document.getElementById(loadingId);
           if (loadingElement) {
-            // Highlight it in deep red so it catches your eye instantly
             loadingElement.innerHTML = `<span style="color: #f87171; font-weight: bold;">⚠️ Pipeline Route Crashed:</span><br><pre style="background: #000; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 0.8rem; margin-top: 5px; overflow-x: auto;">${err.message}</pre>`;
           }
         } finally {
@@ -325,8 +416,6 @@
         msgBlock.innerText = text;
 
         viewport.appendChild(msgBlock);
-
-        // Auto-scroll instantly down to mirror dynamic console trace feel
         viewport.scrollTop = viewport.scrollHeight;
 
         return uniqueId;

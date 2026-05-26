@@ -2,18 +2,48 @@
 import os
 import asyncio
 import traceback
+from contextlib import asynccontextmanager  # ◄ Added for non-blocking startup lifecycle
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse  # ◄ Added for serving index.html
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, AIMessage
 
 from src.workspace import SystemWorkspaceManager
-from src.graph import mcp_router
 
-app = FastAPI(title="RepoIntel API Gateway", version="2.0.0")
+# Global pointers — deferred until the port successfully opens
+workspace_manager = None
+mcp_router = None
 
-# Keep CORS broad so local testing environments don't conflict
+# =====================================================================
+# NEW: Lifespan Manager binds the port FIRST, then initializes systems
+# =====================================================================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global workspace_manager, mcp_router
+    print("\n🚀 Port opened successfully! Render scan passed. Initializing core engines...")
+    
+    try:
+        workspace_manager = SystemWorkspaceManager()
+        
+        # Defer importing the graph layer until lifespan execution
+        print("🤖 Instantiating LangGraph + MCP Server Pipeline...")
+        from src.graph import mcp_router as instantiated_router
+        mcp_router = instantiated_router
+        
+        print("✅ Core systems are online and fully initialized.\n")
+        yield
+    except Exception as startup_err:
+        print("\n" + "🔥" * 20)
+        print(f"🚨 CRITICAL SYSTEM LIFESPAN INITIALIZATION FAILURE: {startup_err}")
+        traceback.print_exc()
+        print("🔥" * 20 + "\n")
+        # Yield anyway to keep the app process alive for log debugging
+        yield
+
+# Register the lifespan framework to the FastAPI constructor
+app = FastAPI(title="RepoIntel API Gateway", version="2.0.0", lifespan=lifespan)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,67 +52,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =====================================================================
-# NEW: Global Exception Middleware to print error logs to terminal
-# =====================================================================
-
-
 @app.middleware("http")
 async def catch_exceptions_middleware(request: Request, call_next):
     try:
         return await call_next(request)
     except Exception as e:
-        # Print the massive, detailed stack trace directly into your command line
         print("\n" + "💥" * 40)
-        print(
-            f"🔥 CRITICAL BACKEND ERROR DETECTED DURING REQUEST: {request.url.path}")
+        print(f"🔥 CRITICAL BACKEND ERROR DETECTED DURING REQUEST: {request.url.path}")
         print("💥" * 40)
-        traceback.print_exc()  # This prints the file name, line number, and error name
+        traceback.print_exc()
         print("💥" * 40 + "\n")
-
-        # Format the exception message cleanly as JSON for your frontend script
         return JSONResponse(
             status_code=500,
-            content={
-                "detail": f"Internal Server Error: {str(e)}", "trace": traceback.format_exc()}
+            content={"detail": f"Internal Server Error: {str(e)}", "trace": traceback.format_exc()}
         )
-
-workspace_manager = SystemWorkspaceManager()
 
 session_context = {
     "current_workspace": None,
     "chat_history": []
 }
 
-
 class IngestRequest(BaseModel):
     repo_url: str
-
 
 class ChatRequest(BaseModel):
     message: str
 
-# =====================================================================
-# NEW: Serve your index.html directly at the root URL (/)
-# =====================================================================
-
-
 @app.get("/")
 async def serve_frontend():
     """Serves the vanilla HTML interface straight from the project folder."""
-    # Looks for index.html in the directory where server.py is running
     html_path = os.path.join(os.path.dirname(__file__), "index.html")
     if os.path.exists(html_path):
         return FileResponse(html_path)
-    raise HTTPException(
-        status_code=404, detail="Frontend index.html file not found inside root path.")
-
+    raise HTTPException(status_code=404, detail="Frontend index.html file not found inside root path.")
 
 @app.post("/api/ingest")
 async def ingest_repository(payload: IngestRequest):
+    if workspace_manager is None:
+        raise HTTPException(status_code=503, detail="Server workspace manager is still initializing.")
+        
     if not payload.repo_url.strip():
-        raise HTTPException(
-            status_code=400, detail="Provided repository URL is empty.")
+        raise HTTPException(status_code=400, detail="Provided repository URL is empty.")
     try:
         loop = asyncio.get_event_loop()
         workspace_path = await loop.run_in_executor(
@@ -93,15 +103,15 @@ async def ingest_repository(payload: IngestRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/api/chat")
 async def process_user_query(payload: ChatRequest):
-    if not payload.message.strip():
-        raise HTTPException(
-            status_code=400, detail="Query message cannot be blank.")
+    if mcp_router is None:
+        raise HTTPException(status_code=503, detail="The AI code routing engine is offline or failed initialization.")
 
-    session_context["chat_history"].append(
-        HumanMessage(content=payload.message))
+    if not payload.message.strip():
+        raise HTTPException(status_code=400, detail="Query message cannot be blank.")
+
+    session_context["chat_history"].append(HumanMessage(content=payload.message))
 
     initial_graph_state = {
         "messages": session_context["chat_history"],
@@ -114,10 +124,20 @@ async def process_user_query(payload: ChatRequest):
         session_context["chat_history"].append(AIMessage(content=agent_reply))
         return {"response": agent_reply}
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Pipeline error: {str(e)}")
+        root_exception = e
+        while hasattr(root_exception, "exceptions") and root_exception.exceptions:
+            root_exception = root_exception.exceptions[0]
+
+        error_message = f"[{type(root_exception).__name__}]: {str(root_exception)}"
+        
+        print("\n" + "❌" * 40)
+        print(f"🚨 ABSOLUTE ROOT PIPELINE CRASH EXPOSED: {error_message}")
+        print("❌" * 40)
+        traceback.print_exc()
+        print("❌" * 40 + "\n")
+
+        raise HTTPException(status_code=500, detail=f"Pipeline error: {error_message}")
 
 if __name__ == "__main__":
     import uvicorn
-    # Bind to 0.0.0.0 so external cloud infrastructure environments can route ports smoothly
     uvicorn.run("server.py", host="0.0.0.0", port=8000, reload=True)

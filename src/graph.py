@@ -64,7 +64,7 @@ def analysis_node(state: AgentState):
         f"Retrieved Code Semantics Context:\n{context_str}"
     )
 
-    llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0)
+    llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.0)
     langchain_tools = state.get("mcp_tools_cache", [])
     bound_llm = llm.bind_tools(langchain_tools) if langchain_tools else llm
 
