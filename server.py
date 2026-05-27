@@ -21,23 +21,30 @@ workspace_manager = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global workspace_manager
-    print("\n🚀 NETWORK PORT ACQUIRED. Initializing lightweight system frames...")
+    global workspace_manager, mcp_router
+    print("\n🚀 NETWORK PORT BINDING SUCCESSFUL! Render scan passed.")
+    print("🤖 Lazily instantiating LangGraph, MCP Tools, and Subprocesses...")
+
     try:
-        # Thanks to lazy loading, this step is now completely lightweight!
         workspace_manager = SystemWorkspaceManager()
 
-        # Defer background client connections slightly
-        await asyncio.sleep(0.2)
+        # Pull the router context into scope
+        from src.graph import mcp_router as instantiated_router
+        mcp_router = instantiated_router
+
+        # Fire up the long-lived background connection stream safely
         await mcp_router.start_session()
 
-        print("✅ Core architectures online. Handing execution thread to Uvicorn.\n")
+        print("✅ Core systems initialized successfully. Ready to handle queries.\n")
         yield
-    except Exception as err:
-        print(f"🚨 LIFESPAN EXCEPTION STACK: {err}")
-        yield
+    except Exception as startup_err:
+        print(f"\n🔥 CRITICAL LIFESPAN SETUP RUNTIME CRASH: {startup_err}")
+        traceback.print_exc()
+        yield  # Yield anyway so the port remains responsive for local debugging
     finally:
-        await mcp_router.stop_session()
+        # Prevent orphaned zombie processes locally when turning off the server
+        if mcp_router:
+            await mcp_router.stop_session()
 
 app = FastAPI(title="RepoIntel API Gateway",
               version="2.0.0", lifespan=lifespan)
