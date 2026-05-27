@@ -1,4 +1,5 @@
 import os
+import sys  # ◄ Add this import at the top
 from typing import Annotated, Sequence, TypedDict
 from dotenv import load_dotenv
 
@@ -26,8 +27,8 @@ class AgentState(TypedDict):
 
 # Configure runtime subprocess parameters for our MCP server
 server_params = StdioServerParameters(
-    command="uv",
-    args=["run", "python", "-m", "src.mcp_server"]
+    command=sys.executable,
+    args=["-m", "src.mcp_server"]
 )
 
 
@@ -122,55 +123,61 @@ class RealMCPClientRouter:
 
     def __init__(self):
         self.graph = compiled_graph
-        self.server_params = StdioServerParameters(
-            command="uv",
-            args=["run", "python", "-m", "src.mcp_server"]
-        )
+        self.server_params = server_params
         self.exit_stack = None
         self.session = None
         self.mcp_tools = []
 
     async def start_session(self):
-        """Spins up the background process once and keeps it alive."""
+        """Spins up the background process once on startup and keeps it alive."""
         if self.session is not None:
-            return # Already connected
-            
-        print("🔌 Connecting to background MCP Server process...")
+            return  # Connection is already active
+
+        print("🔌 Connecting to background MCP Server process stream...")
         self.exit_stack = AsyncExitStack()
-        
-        # Connect to the stdio transport layer
-        read_stream, write_stream = await self.exit_stack.enter_async_context(
-            stdio_client(self.server_params)
-        )
-        
-        # Establish the formal MCP Client Session
-        self.session = await self.exit_stack.enter_async_context(
-            ClientSession(read_stream, write_stream)
-        )
-        
-        await self.session.initialize()
-        # Pre-cache the tools so we don't have to reload them every chat request
-        self.mcp_tools = await load_mcp_tools(self.session)
-        print("🛰️ Persistent MCP session connection established cleanly.")
+
+        try:
+            # Safely hook into the stdio transport layers
+            read_stream, write_stream = await self.exit_stack.enter_async_context(
+                stdio_client(self.server_params)
+            )
+
+            # Establish the formal protocol session context
+            self.session = await self.exit_stack.enter_async_context(
+                ClientSession(read_stream, write_stream)
+            )
+
+            await self.session.initialize()
+
+            # Pre-cache tools so we don't reload them during request execution loops
+            self.mcp_tools = await load_mcp_tools(self.session)
+            print("🛰️ Persistent MCP session connection established cleanly.")
+
+        except Exception as e:
+            print(f"❌ Failed to spin up background MCP runtime stream: {e}")
+            await self.stop_session()
+            raise e
 
     async def stop_session(self):
-        """Gracefully tears down the background subprocess pipes."""
+        """Gracefully tears down background subprocess pipes on teardown."""
         if self.exit_stack:
-            print("🛑 Closing MCP background session...")
+            print("🛑 Closing MCP background process session safely...")
             await self.exit_stack.aclose()
             self.session = None
             self.exit_stack = None
 
     async def run_pipeline(self, initial_state: dict):
-        """Executes your LangGraph without thrashing the OS with subprocess initializations."""
+        """Executes LangGraph workflows without thashing the OS with fresh subprocesses."""
         if not self.session:
-            raise RuntimeError("MCP routing engine is offline. Call start_session() first.")
+            raise RuntimeError(
+                "MCP routing engine is offline. Call start_session() first.")
 
-        # Thread the already established streaming components straight into the context
+        # Thread the open streaming components straight into the context
         initial_state["mcp_session"] = self.session
         initial_state["mcp_tools_cache"] = self.mcp_tools
 
         return await self.graph.ainvoke(initial_state)
 
-# Instantiate the instance once globally
+
+# Instantiate the routing anchor globally
 mcp_router = RealMCPClientRouter()

@@ -5,6 +5,7 @@ build/
 dist/
 wheels/
 workspace_cache/
+db/
 *.egg-info
 
 # Virtual environments
