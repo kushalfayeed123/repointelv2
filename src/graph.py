@@ -9,8 +9,8 @@ from langgraph.graph.message import add_messages
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from contextlib import AsyncExitStack  # ◄ Added for persistent tracking
 
-# FIX: Import the official async bulk tool loader
 from langchain_mcp_adapters.tools import load_mcp_tools
 from src.vector_store import LanceIndexingVault
 
@@ -119,26 +119,59 @@ compiled_graph = workflow.compile()
 # ----------------------------------------------------------------------
 
 class RealMCPClientRouter:
-    """Manages an active connection session to run tools over protocol streams."""
+    """Manages a single, long-lived persistent connection session to the MCP server."""
 
     def __init__(self):
         self.graph = compiled_graph
+        self.server_params = StdioServerParameters(
+            command="uv",
+            args=["run", "python", "-m", "src.mcp_server"]
+        )
+        self.exit_stack = None
+        self.session = None
+        self.mcp_tools = []
+
+    async def start_session(self):
+        """Spins up the background process once and keeps it alive."""
+        if self.session is not None:
+            return # Already connected
+            
+        print("🔌 Connecting to background MCP Server process...")
+        self.exit_stack = AsyncExitStack()
+        
+        # Connect to the stdio transport layer
+        read_stream, write_stream = await self.exit_stack.enter_async_context(
+            stdio_client(self.server_params)
+        )
+        
+        # Establish the formal MCP Client Session
+        self.session = await self.exit_stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
+        
+        await self.session.initialize()
+        # Pre-cache the tools so we don't have to reload them every chat request
+        self.mcp_tools = await load_mcp_tools(self.session)
+        print("🛰️ Persistent MCP session connection established cleanly.")
+
+    async def stop_session(self):
+        """Gracefully tears down the background subprocess pipes."""
+        if self.exit_stack:
+            print("🛑 Closing MCP background session...")
+            await self.exit_stack.aclose()
+            self.session = None
+            self.exit_stack = None
 
     async def run_pipeline(self, initial_state: dict):
-        # Establish standard input/output (stdio) connection streams
-        async with stdio_client(server_params) as (read_stream, write_stream):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
+        """Executes your LangGraph without thrashing the OS with subprocess initializations."""
+        if not self.session:
+            raise RuntimeError("MCP routing engine is offline. Call start_session() first.")
 
-                # FIX: Fetch and convert tools in one clean async call
-                langchain_tools = await load_mcp_tools(session)
+        # Thread the already established streaming components straight into the context
+        initial_state["mcp_session"] = self.session
+        initial_state["mcp_tools_cache"] = self.mcp_tools
 
-                # Thread session dependencies safely into our initial graph state
-                initial_state["mcp_session"] = session
-                initial_state["mcp_tools_cache"] = langchain_tools
+        return await self.graph.ainvoke(initial_state)
 
-                # Kick off pipeline processing
-                return await self.graph.ainvoke(initial_state)
-
-
+# Instantiate the instance once globally
 mcp_router = RealMCPClientRouter()
