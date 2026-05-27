@@ -22,21 +22,21 @@ workspace_manager = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global workspace_manager
-    print("\n🚀 Port acquired by Uvicorn. Initializing system engines...")
+    print("\n🚀 NETWORK PORT ACQUIRED. Initializing lightweight system frames...")
     try:
+        # Thanks to lazy loading, this step is now completely lightweight!
         workspace_manager = SystemWorkspaceManager()
 
-        # Explicitly open the persistent background channel here
+        # Defer background client connections slightly
+        await asyncio.sleep(0.2)
         await mcp_router.start_session()
 
-        print("✅ Core systems online and stable.\n")
+        print("✅ Core architectures online. Handing execution thread to Uvicorn.\n")
         yield
-    except Exception as startup_err:
-        print(f"\n🔥 LIFESPAN STANDBY CRASH: {startup_err}")
-        traceback.print_exc()
+    except Exception as err:
+        print(f"🚨 LIFESPAN EXCEPTION STACK: {err}")
         yield
     finally:
-        # Graceful shutdown when Render stops the web container instance
         await mcp_router.stop_session()
 
 app = FastAPI(title="RepoIntel API Gateway",
