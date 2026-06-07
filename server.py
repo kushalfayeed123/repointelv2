@@ -161,23 +161,30 @@ async def process_user_query(payload: ChatRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    import importlib.util # ◄ Standard library helper
     
-    # 1. Dynamically read port allocations from cloud providers (e.g., Render/AWS)
     target_port = int(os.getenv("PORT", 8000))
-    
-    # 2. Determine performance concurrency parameters
-    # Fallback to a single worker if using local reloading, otherwise use 4 workers for multi-core scaling
     workers_count = int(os.getenv("WEB_CONCURRENCY", 4))
+    
+    # 💡 THE FIX: Check if the module is inspectable without natively running an 'import'
+    if importlib.util.find_spec("uvloop") is not None:
+        chosen_loop = "uvloop"
+        chosen_http = "httptools"
+        print("⚡ Using high-performance engine configurations (uvloop + httptools)")
+    else:
+        chosen_loop = "asyncio"
+        chosen_http = "auto"
+        print("🐢 Falling back to standard engine configurations (asyncio)")
 
     print(f"⚙️ Booting RepoIntel Gateway Engine on interface 0.0.0.0:{target_port} with {workers_count} workers...")
     
     uvicorn.run(
-        "server:app",           # Target reference matching file name : FastAPI instance variable name
-        host="0.0.0.0",         # Bind to all network interfaces so cloud routers can route traffic
-        port=target_port,       # Bind to the target port
-        workers=workers_count,   # Run multiple worker processes for high throughput
-        loop="uvloop",          # Use ultra-fast C-based asyncio event loop replacement
-        http="httptools",       # High-performance C-based HTTP parser integration
-        access_log=False,       # Disable noisy connection logs to eliminate disk I/O overhead
-        log_level="warning"     # Only log actionable server warnings or critical runtime exceptions
+        "server:app",           
+        host="0.0.0.0",         
+        port=target_port,       
+        workers=workers_count,  
+        loop=chosen_loop,       
+        http=chosen_http,       
+        access_log=False,       
+        log_level="warning"     
     )
