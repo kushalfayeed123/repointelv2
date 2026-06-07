@@ -25,6 +25,9 @@ class CodebasePayload(BaseModel):
 class LocalASTEngine:
     """Uses tree-sitter queries to extract universal programming symbols across multiple targets."""
 
+    # OPTIMIZATION 3: Cache tree-sitter parsers per language to avoid reinitialization
+    _PARSER_CACHE = {}
+
     EXTENSION_MAP = {
         ".py": "python",
         ".js": "javascript",
@@ -32,8 +35,22 @@ class LocalASTEngine:
         ".go": "go",
         ".rs": "rust",
         ".cpp": "cpp",
-        ".java": "java"
+        ".java": "java",
+        ".dart": "dart",
+        ".cs": "csharp",
     }
+
+    @classmethod
+    def _get_parser(cls, lang_id: str):
+        """Returns cached parser for language, creating one if needed."""
+        if lang_id not in cls._PARSER_CACHE:
+            parser = Parser()
+            try:
+                language_binding = tree_sitter_languages.get_language(lang_id)
+                cls._PARSER_CACHE[lang_id] = (parser, language_binding)
+            except Exception:
+                return None, None
+        return cls._PARSER_CACHE[lang_id]
 
     # Universal Tree-Sitter queries mapping syntax nodes to tags
     LANGUAGE_QUERIES = {
@@ -75,14 +92,11 @@ class LocalASTEngine:
         source_text = source_text.replace("\r\n", "\n")
         source_bytes = bytes(source_text, "utf8")
 
-        parser = Parser()
-        try:
-            language_binding = tree_sitter_languages.get_language(lang_id)
-            parser.set_language(language_binding)
-        except Exception:
+        parser, language_binding = cls._get_parser(lang_id)
+        if parser is None or language_binding is None:
             return cls._generate_fallback_payload(file_path, source_text)
 
-        tree = parser.parse(source_bytes)
+        tree = parser.parse(source_bytes, language=language_binding)
         root_node = tree.root_node
 
         extracted_functions = []

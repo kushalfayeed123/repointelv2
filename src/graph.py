@@ -15,12 +15,26 @@ from mcp.client.sse import sse_client
 
 load_dotenv()
 
+# =====================================================================
+# OPTIMIZATION 1: Cache LLM instance globally to avoid reinitialization
+# =====================================================================
+_cached_llm = None
+
+def get_cached_llm():
+    """Returns a singleton LLM instance to avoid memory overhead per request."""
+    global _cached_llm
+    if _cached_llm is None:
+        print("⚡ Initializing cached LLM instance...")
+        _cached_llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.0)
+    return _cached_llm
+
 
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     focused_file_path: str
     mcp_session: ClientSession         # Holds our active protocol connection reference
     mcp_tools_cache: list              # Stores converted LangChain tools
+    vault: LanceIndexingVault          # Reused vault instance for semantic search
 
 
 # ----------------------------------------------------------------------
@@ -33,7 +47,9 @@ def analysis_node(state: AgentState):
     workspace_root = state.get("focused_file_path", "")
 
     # Query LanceDB to pull target snippets matching the query context
-    vault = LanceIndexingVault()
+    vault = state.get("vault")
+    if vault is None:
+        vault = LanceIndexingVault()
     contexts = vault.semantic_code_search(str(last_user_query), limit=3)
 
     context_blocks = []
@@ -54,7 +70,7 @@ def analysis_node(state: AgentState):
         f"Retrieved Code Semantics Context:\n{context_str}"
     )
 
-    llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.0)
+    llm = get_cached_llm()
     langchain_tools = state.get("mcp_tools_cache", [])
     bound_llm = llm.bind_tools(langchain_tools) if langchain_tools else llm
 
@@ -122,6 +138,7 @@ class RealMCPClientRouter:
         self.exit_stack = None
         self.session = None
         self.mcp_tools = []
+        self.vault = LanceIndexingVault()  # ◄ OPTIMIZATION 5: Reuse single vault instance
 
 
     # Inside src/graph.py -> RealMCPClientRouter class
@@ -172,6 +189,7 @@ class RealMCPClientRouter:
 
         initial_state["mcp_session"] = self.session
         initial_state["mcp_tools_cache"] = self.mcp_tools
+        initial_state["vault"] = self.vault  # ◄ OPTIMIZATION 5: Pass cached vault instance
 
         return await self.graph.ainvoke(initial_state)
 

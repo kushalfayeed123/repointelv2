@@ -82,6 +82,15 @@ session_context = {
     "chat_history": []
 }
 
+# OPTIMIZATION 2: Chat history windowing to prevent unbounded memory growth
+MAX_HISTORY_TURNS = 10
+
+def trim_chat_history(history: list) -> list:
+    """Keep only the last N turns to prevent memory explosion in long conversations."""
+    if len(history) > MAX_HISTORY_TURNS:
+        return history[-MAX_HISTORY_TURNS:]
+    return history
+
 
 class IngestRequest(BaseModel):
     repo_url: str
@@ -131,8 +140,11 @@ async def process_user_query(payload: ChatRequest):
     session_context["chat_history"].append(
         HumanMessage(content=payload.message))
 
+    # OPTIMIZATION 2: Apply history windowing before pipeline execution
+    trimmed_history = trim_chat_history(session_context["chat_history"])
+
     initial_graph_state = cast(AgentState, {
-        "messages": session_context["chat_history"],
+        "messages": trimmed_history,
         "focused_file_path": session_context["current_workspace"] or os.getcwd(),
         "mcp_session": mcp_router.session,
         "mcp_tools_cache": mcp_router.mcp_tools

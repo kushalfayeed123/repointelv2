@@ -31,33 +31,40 @@ class LanceIndexingVault:
     def index_file_payload(self, payload: CodebasePayload):
         table_name = "codebase_index"
         records = []
+        texts_to_embed = []
+        metadata_list = []
 
+        # OPTIMIZATION 4: Batch embedding calls - collect all texts first
         for func in payload.standalone_functions:
             tags = f"function {func.name} imports: {', '.join(payload.top_level_imports)}"
-            vector = self.encoder.embed_query(func.source_code)  # ◄ Uses lazy property accessor
-            records.append({
+            texts_to_embed.append(func.source_code)
+            metadata_list.append({
                 "id": f"{payload.file_path}::{func.name}",
                 "file_path": payload.file_path,
                 "type": "function",
                 "name": func.name,
                 "meta_tags": tags,
-                "source_code": func.source_code,
-                "vector": vector
+                "source_code": func.source_code
             })
 
         for cls in payload.classes:
             tags = f"class {cls.name} methods: {', '.join([m.name for m in cls.methods])}"
-            combined_class_text = f"class {cls.name}:n" + "n".join([m.source_code for m in cls.methods])
-            vector = self.encoder.embed_query(combined_class_text)  # ◄ Uses lazy property accessor
-            records.append({
+            combined_class_text = f"class {cls.name}:\n" + "\n".join([m.source_code for m in cls.methods])
+            texts_to_embed.append(combined_class_text)
+            metadata_list.append({
                 "id": f"{payload.file_path}::{cls.name}",
                 "file_path": payload.file_path,
                 "type": "class",
                 "name": cls.name,
                 "meta_tags": tags,
-                "source_code": combined_class_text,
-                "vector": vector
+                "source_code": combined_class_text
             })
+
+        # Batch embed all texts at once instead of individual calls
+        if texts_to_embed:
+            vectors = self.encoder.embed_documents(texts_to_embed)
+            for metadata, vector in zip(metadata_list, vectors):
+                records.append({**metadata, "vector": vector})
 
         if not records:
             return
