@@ -2,6 +2,7 @@ import os
 import asyncio
 import traceback
 from contextlib import asynccontextmanager
+from typing import cast
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -10,7 +11,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from src.workspace import SystemWorkspaceManager
 # ◄ Fully safe to import globally now because it does nothing on read!
-from src.graph import mcp_router
+from src.graph import AgentState, mcp_router
 
 workspace_manager = None
 
@@ -128,10 +129,12 @@ async def process_user_query(payload: ChatRequest):
     session_context["chat_history"].append(
         HumanMessage(content=payload.message))
 
-    initial_graph_state = {
+    initial_graph_state = cast(AgentState, {
         "messages": session_context["chat_history"],
-        "focused_file_path": session_context["current_workspace"] or os.getcwd()
-    }
+        "focused_file_path": session_context["current_workspace"] or os.getcwd(),
+        "mcp_session": mcp_router.session,
+        "mcp_tools_cache": mcp_router.mcp_tools
+    })
 
     try:
         final_state = await mcp_router.run_pipeline(initial_graph_state)
@@ -140,8 +143,8 @@ async def process_user_query(payload: ChatRequest):
         return {"response": agent_reply}
     except Exception as e:
         root_exception = e
-        while hasattr(root_exception, "exceptions") and root_exception.exceptions:
-            root_exception = root_exception.exceptions[0]
+        while hasattr(root_exception, "__cause__") and root_exception.__cause__:
+            root_exception = root_exception.__cause__
 
         error_message = f"[{type(root_exception).__name__}]: {str(root_exception)}"
 
@@ -156,5 +159,23 @@ async def process_user_query(payload: ChatRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    # ◄ Explicitly false for production safety
-    uvicorn.run("server.py", host="0.0.0.0", port=8000, reload=False)
+    
+    # 1. Dynamically read port allocations from cloud providers (e.g., Render/AWS)
+    target_port = int(os.getenv("PORT", 8000))
+    
+    # 2. Determine performance concurrency parameters
+    # Fallback to a single worker if using local reloading, otherwise use 4 workers for multi-core scaling
+    workers_count = int(os.getenv("WEB_CONCURRENCY", 4))
+
+    print(f"⚙️ Booting RepoIntel Gateway Engine on interface 0.0.0.0:{target_port} with {workers_count} workers...")
+    
+    uvicorn.run(
+        "server:app",           # Target reference matching file name : FastAPI instance variable name
+        host="0.0.0.0",         # Bind to all network interfaces so cloud routers can route traffic
+        port=target_port,       # Bind to the target port
+        workers=workers_count,   # Run multiple worker processes for high throughput
+        loop="uvloop",          # Use ultra-fast C-based asyncio event loop replacement
+        http="httptools",       # High-performance C-based HTTP parser integration
+        access_log=False,       # Disable noisy connection logs to eliminate disk I/O overhead
+        log_level="warning"     # Only log actionable server warnings or critical runtime exceptions
+    )
