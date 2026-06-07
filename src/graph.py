@@ -1,5 +1,4 @@
 import os
-import sys  # ◄ Add this import at the top
 from typing import Annotated, Sequence, TypedDict
 from dotenv import load_dotenv
 
@@ -8,12 +7,11 @@ from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from contextlib import AsyncExitStack  # ◄ Added for persistent tracking
-
+from mcp import ClientSession
+from contextlib import AsyncExitStack 
 from langchain_mcp_adapters.tools import load_mcp_tools
 from src.vector_store import LanceIndexingVault
+from mcp.client.sse import sse_client
 
 load_dotenv()
 
@@ -25,15 +23,8 @@ class AgentState(TypedDict):
     mcp_tools_cache: list              # Stores converted LangChain tools
 
 
-# Configure runtime subprocess parameters for our MCP server
-server_params = StdioServerParameters(
-    command=sys.executable,
-    args=["-m", "src.mcp_server"]
-)
-
-
 # ----------------------------------------------------------------------
-# 1. Top-Level Node Architecture (Lifted for stable graph scoping)
+# 1. Top-Level Node Architecture
 # ----------------------------------------------------------------------
 
 def analysis_node(state: AgentState):
@@ -67,8 +58,7 @@ def analysis_node(state: AgentState):
     langchain_tools = state.get("mcp_tools_cache", [])
     bound_llm = llm.bind_tools(langchain_tools) if langchain_tools else llm
 
-    response = bound_llm.invoke(
-        [HumanMessage(content=system_prompt)] + messages)
+    response = bound_llm.invoke([HumanMessage(content=system_prompt)] + list(messages))
     return {"messages": [response]}
 
 
@@ -77,8 +67,9 @@ async def execution_node(state: AgentState):
     last_message = messages[-1]
     session = state["mcp_session"]  # Threaded through active graph context
     tool_outputs = []
+    tool_calls = getattr(last_message, "tool_calls", []) or []
 
-    for call in last_message.tool_calls:
+    for call in tool_calls:
         print(f"📡 MCP Client routing call to Server: {call['name']}...")
         result = await session.call_tool(call["name"], arguments=call["args"])
         tool_outputs.append(
@@ -90,7 +81,8 @@ async def execution_node(state: AgentState):
 
 def validation_gate(state: AgentState):
     last_message = state["messages"][-1]
-    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+    tool_calls = getattr(last_message, "tool_calls", []) or []
+    if tool_calls:
         return "execute"
     return END
 
@@ -118,66 +110,70 @@ compiled_graph = workflow.compile()
 # 3. Execution Router Interface
 # ----------------------------------------------------------------------
 
+# Standardize fallback to match your local bare-metal loopback root address
+MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:5001/")
+
+
 class RealMCPClientRouter:
-    """Manages a single, long-lived persistent connection session to the MCP server."""
+    """Manages a single, long-lived persistent connection session to the remote MCP microservice container."""
 
     def __init__(self):
         self.graph = compiled_graph
-        self.server_params = server_params
         self.exit_stack = None
         self.session = None
         self.mcp_tools = []
 
-    async def start_session(self):
-        """Spins up the background process once on startup and keeps it alive."""
-        if self.session is not None:
-            return  # Connection is already active
 
-        print("🔌 Connecting to background MCP Server process stream...")
+    # Inside src/graph.py -> RealMCPClientRouter class
+
+    async def start_session(self):
+        """Spins up the network client stream connection natively on gateway startup."""
+        if self.session is not None:
+            return  
+
+        # Pull exact endpoint target directly
+        target_endpoint = MCP_SERVER_URL.rstrip("/")
+        print(f"🔌 Connecting to network MCP Stream endpoint: {target_endpoint} ...")
         self.exit_stack = AsyncExitStack()
 
         try:
-            # Safely hook into the stdio transport layers
             read_stream, write_stream = await self.exit_stack.enter_async_context(
-                stdio_client(self.server_params)
+                sse_client(target_endpoint)
             )
 
-            # Establish the formal protocol session context
             self.session = await self.exit_stack.enter_async_context(
                 ClientSession(read_stream, write_stream)
             )
 
             await self.session.initialize()
-
-            # Pre-cache tools so we don't reload them during request execution loops
             self.mcp_tools = await load_mcp_tools(self.session)
-            print("🛰️ Persistent MCP session connection established cleanly.")
+            print("🛰️ Remote network MCP session container bound successfully.")
 
         except Exception as e:
-            print(f"❌ Failed to spin up background MCP runtime stream: {e}")
+            print(f"❌ Structural Failure connecting to runtime service: {e}")
             await self.stop_session()
-            raise e
+            # 💡 CRITICAL: Raise the error out of the startup hook! 
+            # This stops the gateway server immediately so you don't run an offline mesh
+            raise SystemExit("Stopping gateway because background MCP server is unreachable.")
 
     async def stop_session(self):
-        """Gracefully tears down background subprocess pipes on teardown."""
+        """Tears down network streaming contexts gracefully on service stop events."""
         if self.exit_stack:
-            print("🛑 Closing MCP background process session safely...")
+            print("🛑 Disconnecting remote MCP target streams safely...")
             await self.exit_stack.aclose()
             self.session = None
             self.exit_stack = None
 
-    async def run_pipeline(self, initial_state: dict):
-        """Executes LangGraph workflows without thashing the OS with fresh subprocesses."""
+    async def run_pipeline(self, initial_state: AgentState):
+        """Runs the LangGraph framework injecting the persistent session state properties."""
         if not self.session:
             raise RuntimeError(
-                "MCP routing engine is offline. Call start_session() first.")
+                "MCP Routing architecture engine is offline. Start session context first.")
 
-        # Thread the open streaming components straight into the context
         initial_state["mcp_session"] = self.session
         initial_state["mcp_tools_cache"] = self.mcp_tools
 
         return await self.graph.ainvoke(initial_state)
 
 
-# Instantiate the routing anchor globally
 mcp_router = RealMCPClientRouter()

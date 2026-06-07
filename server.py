@@ -19,30 +19,29 @@ workspace_manager = None
 # =====================================================================
 
 
+# server.py Lifespan Segment update
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global workspace_manager, mcp_router
     print("\n🚀 NETWORK PORT BINDING SUCCESSFUL! Render scan passed.")
-    print("🤖 Lazily instantiating LangGraph, MCP Tools, and Subprocesses...")
+    print("🤖 Connecting to internal decoupled networks...")
 
     try:
         workspace_manager = SystemWorkspaceManager()
 
-        # Pull the router context into scope
+        # Defer LangGraph compilation to prevent memory consumption on runtime compilation checks
         from src.graph import mcp_router as instantiated_router
         mcp_router = instantiated_router
 
-        # Fire up the long-lived background connection stream safely
+        # Open persistent SSE channel streams safely away from public HTTP request execution loops
         await mcp_router.start_session()
 
-        print("✅ Core systems initialized successfully. Ready to handle queries.\n")
+        print("✅ Microservice mesh connections online. Handing thread back to Uvicorn.\n")
         yield
     except Exception as startup_err:
-        print(f"\n🔥 CRITICAL LIFESPAN SETUP RUNTIME CRASH: {startup_err}")
-        traceback.print_exc()
-        yield  # Yield anyway so the port remains responsive for local debugging
+        print(f"\n🔥 CRITICAL ENGINE FAULT ON STARTUP: {startup_err}")
+        yield
     finally:
-        # Prevent orphaned zombie processes locally when turning off the server
         if mcp_router:
             await mcp_router.stop_session()
 
