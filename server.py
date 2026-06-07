@@ -24,27 +24,29 @@ workspace_manager = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global workspace_manager, mcp_router
-    print("\n🚀 NETWORK PORT BINDING SUCCESSFUL! Render scan passed.")
-    print("🤖 Connecting to internal decoupled networks...")
+    print("\n🚀 NETWORK PORT BINDING INITIALIZED! Passing check to Render immediately.")
 
-    try:
-        workspace_manager = SystemWorkspaceManager()
+    workspace_manager = SystemWorkspaceManager()
 
-        # Defer LangGraph compilation to prevent memory consumption on runtime compilation checks
-        from src.graph import mcp_router as instantiated_router
-        mcp_router = instantiated_router
+    # Defer LangGraph compilation to prevent memory spikes on startup
+    from src.graph import mcp_router as instantiated_router
+    mcp_router = instantiated_router
 
-        # Open persistent SSE channel streams safely away from public HTTP request execution loops
-        await mcp_router.start_session()
+    async def connect_mesh_background():
+        print("🤖 Connecting to internal decoupled networks in the background...")
+        try:
+            await mcp_router.start_session()
+            print("✅ Microservice mesh connections online and ready for traffic.\n")
+        except Exception as mesh_err:
+            print(f"\n⚠️ BACKGROUND MESH CONNECTION DELAYED/FAILED: {mesh_err}")
+            print("🔄 System will automatically retry connection during standard chat route invocations.")
 
-        print("✅ Microservice mesh connections online. Handing thread back to Uvicorn.\n")
-        yield
-    except Exception as startup_err:
-        print(f"\n🔥 CRITICAL ENGINE FAULT ON STARTUP: {startup_err}")
-        yield
-    finally:
-        if mcp_router:
-            await mcp_router.stop_session()
+    asyncio.create_task(connect_mesh_background())
+
+    yield
+
+    if mcp_router:
+        await mcp_router.stop_session()
 
 app = FastAPI(title="RepoIntel API Gateway",
               version="2.0.0", lifespan=lifespan)
