@@ -10,7 +10,6 @@ from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, AIMessage
 
 from src.workspace import SystemWorkspaceManager
-# ◄ Fully safe to import globally now because it does nothing on read!
 from src.graph import AgentState, mcp_router
 
 workspace_manager = None
@@ -19,12 +18,11 @@ workspace_manager = None
 # LIFESPAN MANAGER: Tells Uvicorn to open the port FIRST, then load tools
 # =====================================================================
 
-
-# server.py Lifespan Segment update
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global workspace_manager, mcp_router
-    print("\n🚀 NETWORK PORT BINDING INITIALIZED! Passing check to Render immediately.")
+    # Informative trace to monitor multi-worker fork distributions
+    print(f"\n🚀 WORKER PROCESS INITIALIZED (PID: {os.getpid()})! Network port binding sequence cleared.")
 
     workspace_manager = SystemWorkspaceManager()
 
@@ -33,12 +31,12 @@ async def lifespan(app: FastAPI):
     mcp_router = instantiated_router
 
     async def connect_mesh_background():
-        print("🤖 Connecting to internal decoupled networks in the background...")
+        print(f"🤖 [PID {os.getpid()}] Connecting to internal decoupled networks in the background...")
         try:
             await mcp_router.start_session()
-            print("✅ Microservice mesh connections online and ready for traffic.\n")
+            print(f"✅ [PID {os.getpid()}] Microservice mesh connections online and ready for traffic.\n")
         except Exception as mesh_err:
-            print(f"\n⚠️ BACKGROUND MESH CONNECTION DELAYED/FAILED: {mesh_err}")
+            print(f"\n⚠️ [PID {os.getpid()}] BACKGROUND MESH CONNECTION DELAYED: {mesh_err}")
             print("🔄 System will automatically retry connection during standard chat route invocations.")
 
     asyncio.create_task(connect_mesh_background())
@@ -48,8 +46,7 @@ async def lifespan(app: FastAPI):
     if mcp_router:
         await mcp_router.stop_session()
 
-app = FastAPI(title="RepoIntel API Gateway",
-              version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="RepoIntel API Gateway", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -59,30 +56,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.middleware("http")
 async def catch_exceptions_middleware(request: Request, call_next):
     try:
         return await call_next(request)
     except Exception as e:
         print("\n" + "💥" * 40)
-        print(
-            f"🔥 CRITICAL BACKEND ERROR DETECTED DURING REQUEST: {request.url.path}")
+        print(f"🔥 CRITICAL BACKEND ERROR DETECTED DURING REQUEST: {request.url.path}")
         print("💥" * 40)
         traceback.print_exc()
         print("💥" * 40 + "\n")
         return JSONResponse(
             status_code=500,
-            content={
-                "detail": f"Internal Server Error: {str(e)}", "trace": traceback.format_exc()}
+            content={"detail": f"Internal Server Error: {str(e)}", "trace": traceback.format_exc()}
         )
 
+# NOTE: If utilizing multiple workers in the future, these MUST be moved to SQLite/Redis
 session_context = {
     "current_workspace": None,
     "chat_history": []
 }
 
-# OPTIMIZATION 2: Chat history windowing to prevent unbounded memory growth
 MAX_HISTORY_TURNS = 10
 
 def trim_chat_history(history: list) -> list:
@@ -137,10 +131,8 @@ async def process_user_query(payload: ChatRequest):
         raise HTTPException(
             status_code=400, detail="Query message cannot be blank.")
 
-    session_context["chat_history"].append(
-        HumanMessage(content=payload.message))
+    session_context["chat_history"].append(HumanMessage(content=payload.message))
 
-    # OPTIMIZATION 2: Apply history windowing before pipeline execution
     trimmed_history = trim_chat_history(session_context["chat_history"])
 
     initial_graph_state = cast(AgentState, {
@@ -168,17 +160,20 @@ async def process_user_query(payload: ChatRequest):
         traceback.print_exc()
         print("❌" * 40 + "\n")
 
-        raise HTTPException(
-            status_code=500, detail=f"Pipeline error: {error_message}")
+        raise HTTPException(status_code=500, detail=f"Pipeline error: {error_message}")
+
 
 if __name__ == "__main__":
     import uvicorn
-    import importlib.util # ◄ Standard library helper
+    import importlib.util 
     
     target_port = int(os.getenv("PORT", 8000))
-    workers_count = int(os.getenv("WEB_CONCURRENCY", 4))
     
-    # 💡 THE FIX: Check if the module is inspectable without natively running an 'import'
+    # 💡 PRODUCTION TUNING: Render free tiers allocate 1 CPU core. Setting workers to 1 
+    # eliminates multi-process state drifting completely and preserves clean in-memory state.
+    workers_count = int(os.getenv("WEB_CONCURRENCY", 1))
+    
+    # Check if the module is inspectable without natively running an 'import'
     if importlib.util.find_spec("uvloop") is not None:
         chosen_loop = "uvloop"
         chosen_http = "httptools"
@@ -188,7 +183,7 @@ if __name__ == "__main__":
         chosen_http = "auto"
         print("🐢 Falling back to standard engine configurations (asyncio)")
 
-    print(f"⚙️ Booting RepoIntel Gateway Engine on interface 0.0.0.0:{target_port} with {workers_count} workers...")
+    print(f"⚙️ Booting RepoIntel Gateway Engine on interface 0.0.0.0:{target_port} with {workers_count} worker(s)...")
     
     uvicorn.run(
         "server:app",           
