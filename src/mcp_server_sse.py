@@ -43,4 +43,13 @@ def execute_test_suite(test_target_path: str) -> str:
 
 # 💡 THE NATIVE PRODUCTION WAY: Bind explicitly to your target port and loopback host
 if __name__ == "__main__":
-    mcp.run(transport="sse", host="127.0.0.1", port=5001)
+    # 1. Read Render's assigned port dynamically, fallback to 5001 for local development
+    target_port = int(os.getenv("PORT", 5001))
+    
+    # 2. Bind to 0.0.0.0 to expose the service to Render's routing mesh
+    # Local development still works seamlessly over http://127.0.0.1:5001
+    mcp.run(
+        transport="sse", 
+        host="0.0.0.0", 
+        port=target_port
+    )
