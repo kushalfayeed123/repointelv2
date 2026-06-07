@@ -29,5 +29,11 @@ RUN mkdir -p workspace_cache db && chmod -R 777 workspace_cache db
 EXPOSE 8000
 EXPOSE 5001
 
-# The execution fallback command will be overridden by the cloud service configuration
-CMD ["uv", "run", "src/mcp_server_sse.py"]
+# --- ENTRYPOINT CONFIGURATION (Moved to the very bottom) ---
+
+# 💡 FIX: Copy entrypoint.sh into the active working directory (/app)
+COPY entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+
+# The ENTRYPOINT defines the core executable shell wrapper
+ENTRYPOINT ["/bin/bash", "./entrypoint.sh"]
